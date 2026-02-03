@@ -6,9 +6,10 @@
 //! Currently supported languages:
 //! - C
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use std::path::PathBuf;
 use tree_sitter::{Language, Node, Parser as TsParser};
 
 /// Maximum depth for definition search to prevent stack overflow
@@ -31,35 +32,28 @@ impl Lang {
     }
 
     /// Get definition types for this language
-    fn definition_types(self) -> &'static [&'static str] {
+    const fn definition_types(self) -> &'static [&'static str] {
         match self {
             Self::C => &[
                 "function_definition",
-                "type_definition",       // typedef
-                "preproc_def",           // #define
-                "preproc_function_def",  // #define with parameters
+                "type_definition",      // typedef
+                "preproc_def",          // #define
+                "preproc_function_def", // #define with parameters
             ],
         }
     }
 
     /// Get compound types that need body check
-    fn compound_types(self) -> &'static [&'static str] {
+    const fn compound_types(self) -> &'static [&'static str] {
         match self {
-            Self::C => &[
-                "struct_specifier",
-                "union_specifier",
-                "enum_specifier",
-            ],
+            Self::C => &["struct_specifier", "union_specifier", "enum_specifier"],
         }
     }
 
     /// Get body node types for compound types
-    fn body_types(self) -> &'static [&'static str] {
+    const fn body_types(self) -> &'static [&'static str] {
         match self {
-            Self::C => &[
-                "field_declaration_list",
-                "enumerator_list",
-            ],
+            Self::C => &["field_declaration_list", "enumerator_list"],
         }
     }
 
@@ -287,24 +281,23 @@ fn main() -> Result<()> {
             .unwrap_or_default()
     });
 
-    match find_innermost_definition(&args.file_path, args.line_number, lang)? {
-        Some((code, start_line, def_type)) => {
-            if args.show_type {
-                println!("# {def_type} starting at line {start_line}");
-            }
+    if let Some((code, start_line, def_type)) =
+        find_innermost_definition(&args.file_path, args.line_number, lang)?
+    {
+        if args.show_type {
+            println!("# {def_type} starting at line {start_line}");
+        }
 
-            // Print with line numbers
-            for (i, line) in code.lines().enumerate() {
-                println!("{}. {}", start_line + i, line);
-            }
+        // Print with line numbers
+        for (i, line) in code.lines().enumerate() {
+            println!("{}. {}", start_line + i, line);
         }
-        None => {
-            eprintln!(
-                "No enclosing definition found for line {}",
-                args.line_number
-            );
-            std::process::exit(1);
-        }
+    } else {
+        eprintln!(
+            "No enclosing definition found for line {}",
+            args.line_number
+        );
+        std::process::exit(1);
     }
 
     Ok(())
@@ -312,9 +305,11 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     fn create_temp_file(content: &str, extension: &str) -> NamedTempFile {
         let mut file = tempfile::Builder::new()
@@ -327,11 +322,11 @@ mod tests {
 
     #[test]
     fn test_find_function_definition() {
-        let content = r#"
+        let content = r"
 int add(int a, int b) {
     return a + b;
 }
-"#;
+";
         let file = create_temp_file(content, ".c");
         let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
         assert!(result.is_some());
@@ -343,12 +338,12 @@ int add(int a, int b) {
 
     #[test]
     fn test_find_struct_definition() {
-        let content = r#"
+        let content = r"
 struct Point {
     int x;
     int y;
 };
-"#;
+";
         let file = create_temp_file(content, ".c");
         let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
         assert!(result.is_some());
@@ -358,12 +353,12 @@ struct Point {
 
     #[test]
     fn test_find_typedef() {
-        let content = r#"
+        let content = r"
 typedef struct {
     int x;
     int y;
 } Point;
-"#;
+";
         let file = create_temp_file(content, ".c");
         let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
         assert!(result.is_some());
@@ -373,9 +368,9 @@ typedef struct {
 
     #[test]
     fn test_no_definition_found() {
-        let content = r#"
+        let content = r"
 // Just a comment
-"#;
+";
         let file = create_temp_file(content, ".c");
         let result = find_innermost_definition(&file.path().to_path_buf(), 2, Lang::C).unwrap();
         assert!(result.is_none());

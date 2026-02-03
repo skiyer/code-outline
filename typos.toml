@@ -1,0 +1,8 @@
+[default.extend-words]
+# Add allowed words here (e.g., variable names that look like typos)
+
+[files]
+extend-exclude = [
+    "target/",
+    "Cargo.lock",
+]

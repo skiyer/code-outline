@@ -1,0 +1,10 @@
+# Rust style configuration
+max_width = 100
+edition = "2024"
+newline_style = "Unix"
+
+# Imports (stable options only)
+reorder_imports = true
+
+# Formatting
+use_small_heuristics = "Default"
