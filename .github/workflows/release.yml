@@ -34,11 +34,7 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
             use_cross: true
-          # macOS
-          - target: x86_64-apple-darwin
-            os: macos-13
-            archive: tar.gz
-            use_cross: false
+          # macOS (Apple Silicon only)
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
