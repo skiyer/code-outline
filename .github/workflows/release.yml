@@ -16,33 +16,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux
+          # Linux (native)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            use_cross: false
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            use_cross: false
+          # Linux (cross-compile with cross)
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            use_cross: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
+            use_cross: true
           # macOS
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
             archive: tar.gz
+            use_cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            use_cross: false
           # Windows
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
+            use_cross: false
 
     steps:
       - name: Checkout
@@ -53,35 +58,20 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            sudo apt-get install -y musl-tools
-          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
-            sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
-            # Install aarch64-linux-musl-gcc
-            wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
-            tar xzf aarch64-linux-musl-cross.tgz
-            echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-          fi
+      - name: Install musl-tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Set linker for cross-compilation (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir -p .cargo
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-            echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
-          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
-            echo '[target.aarch64-unknown-linux-musl]' >> .cargo/config.toml
-            echo 'linker = "aarch64-linux-musl-gcc"' >> .cargo/config.toml
-          fi
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build release binary
+      - name: Build release binary (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build release binary (cargo)
+        if: "!matrix.use_cross"
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Create archive (Unix)
