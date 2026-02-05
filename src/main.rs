@@ -1,16 +1,17 @@
 //! Extract code definitions from source files using tree-sitter.
 //!
-//! This tool parses source code and finds the innermost enclosing
-//! definition (function, struct, class, enum, etc.) for a given line number.
+//! This tool parses source code and provides two main features:
+//! - Find the innermost enclosing definition for a given line number
+//! - List all definitions in a file (outline)
 //!
 //! Currently supported languages:
 //! - C
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, ValueEnum};
-use tree_sitter::{Language, Node, Parser as TsParser};
+use clap::{Parser, Subcommand, ValueEnum};
+use tree_sitter::{Language, Node, Parser as TsParser, Tree};
 
 /// Maximum depth for definition search to prevent stack overflow
 const MAX_DEFINITION_SEARCH_DEPTH: usize = 128;
@@ -70,20 +71,39 @@ impl Lang {
 #[derive(Parser, Debug)]
 #[command(name = "codedef")]
 #[command(author, version, about = "Extract code definitions from source files using tree-sitter", long_about = None)]
-struct Args {
-    /// Path to the source file
-    file_path: PathBuf,
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// Line number (1-based) to find the enclosing definition for
-    line_number: usize,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Find the innermost enclosing definition for a given line number
+    Find {
+        /// Path to the source file
+        file_path: PathBuf,
 
-    /// Programming language (auto-detected from extension if not specified)
-    #[arg(short, long, value_enum)]
-    lang: Option<Lang>,
+        /// Line number (1-based) to find the enclosing definition for
+        line_number: usize,
 
-    /// Show the type of definition found
-    #[arg(long)]
-    show_type: bool,
+        /// Programming language (auto-detected from extension if not specified)
+        #[arg(short, long, value_enum)]
+        lang: Option<Lang>,
+
+        /// Show the type of definition found
+        #[arg(long)]
+        show_type: bool,
+    },
+
+    /// List all definitions in a file (outline)
+    Outline {
+        /// Path to the source file
+        file_path: PathBuf,
+
+        /// Programming language (auto-detected from extension if not specified)
+        #[arg(short, long, value_enum)]
+        lang: Option<Lang>,
+    },
 }
 
 /// Represents a found definition
@@ -91,9 +111,20 @@ struct Args {
 struct Definition {
     code: String,
     start_line: usize,
+    #[allow(dead_code)]
+    end_line: usize,
     def_type: String,
     size: usize,
     is_typedef_child: bool,
+}
+
+/// Represents an outline entry
+#[derive(Debug)]
+struct OutlineEntry {
+    line: usize,
+    end_line: usize,
+    signature: String,
+    def_type: String,
 }
 
 /// Check if a node contains the target row
@@ -136,8 +167,8 @@ fn has_body(node: &Node, lang: Lang) -> bool {
     false
 }
 
-/// Traverse the AST and collect matching definitions
-fn traverse(
+/// Traverse the AST and collect matching definitions for a specific line
+fn traverse_for_line(
     node: Node<'_>,
     source_code: &str,
     target_row: usize,
@@ -173,11 +204,13 @@ fn traverse(
             .unwrap_or("")
             .to_string();
         let start_line = node.start_position().row + 1;
+        let end_line = node.end_position().row + 1;
         let size = node.end_byte() - node.start_byte();
 
         definitions.push(Definition {
             code,
             start_line,
+            end_line,
             def_type: node_type.to_string(),
             size,
             is_typedef_child: is_parent_typedef && is_compound_type(node_type, lang),
@@ -187,7 +220,7 @@ fn traverse(
     // Continue searching children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        traverse(
+        traverse_for_line(
             child,
             source_code,
             target_row,
@@ -199,34 +232,206 @@ fn traverse(
     }
 }
 
-/// Find the innermost definition for a given line number
-fn find_innermost_definition(
-    file_path: &PathBuf,
-    line_number: usize,
+/// Traverse the AST and collect all definitions for outline
+fn traverse_for_outline(
+    node: Node<'_>,
+    source_code: &str,
+    depth: usize,
+    entries: &mut Vec<OutlineEntry>,
     lang: Lang,
-) -> Result<Option<(String, usize, String)>> {
-    // Read source file
+    is_parent_typedef: bool,
+) {
+    if depth >= MAX_DEFINITION_SEARCH_DEPTH {
+        return;
+    }
+
+    let node_type = node.kind();
+    let mut is_definition = false;
+    let mut mark_compound_child = false;
+    let mut skip_as_typedef_child = false;
+
+    if is_definition_type(node_type, lang) {
+        is_definition = true;
+        if node_type == "type_definition" {
+            mark_compound_child = true;
+        }
+    } else if is_compound_type(node_type, lang) && has_body(&node, lang) {
+        is_definition = true;
+        if is_parent_typedef {
+            skip_as_typedef_child = true;
+        }
+    }
+
+    if is_definition && !skip_as_typedef_child {
+        let line = node.start_position().row + 1;
+        let end_line = node.end_position().row + 1;
+        let signature = extract_signature(&node, source_code, lang);
+
+        entries.push(OutlineEntry {
+            line,
+            end_line,
+            signature,
+            def_type: node_type.to_string(),
+        });
+    }
+
+    // Continue searching children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        traverse_for_outline(
+            child,
+            source_code,
+            depth + 1,
+            entries,
+            lang,
+            mark_compound_child || is_parent_typedef,
+        );
+    }
+}
+
+/// Extract a compact signature from a definition node
+fn extract_signature(node: &Node, source_code: &str, lang: Lang) -> String {
+    match lang {
+        Lang::C => extract_c_signature(node, source_code),
+    }
+}
+
+/// Extract signature for C language definitions
+fn extract_c_signature(node: &Node, source_code: &str) -> String {
+    let node_type = node.kind();
+
+    match node_type {
+        "function_definition" => {
+            // Extract declarator (function name and parameters)
+            if let Some(declarator) = node.child_by_field_name("declarator") {
+                let sig = get_node_text(&declarator, source_code);
+                // Also get return type
+                if let Some(type_node) = node.child_by_field_name("type") {
+                    let ret_type = get_node_text(&type_node, source_code);
+                    return format!("{ret_type} {sig}");
+                }
+                return sig;
+            }
+            get_first_line(node, source_code)
+        }
+        "type_definition" => {
+            // For typedef, get the whole first line or the type name
+            let text = get_node_text(node, source_code);
+            // Try to extract a cleaner representation
+            if let Some(first_line) = text.lines().next() {
+                let trimmed = first_line.trim();
+                if trimmed.len() <= 80 {
+                    return trimmed.to_string();
+                }
+                // Truncate long lines
+                return format!("{}...", &trimmed[..77]);
+            }
+            text
+        }
+        "struct_specifier" | "union_specifier" | "enum_specifier" => {
+            // Get the keyword and name
+            let keyword = match node_type {
+                "struct_specifier" => "struct",
+                "union_specifier" => "union",
+                "enum_specifier" => "enum",
+                _ => "",
+            };
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = get_node_text(&name_node, source_code);
+                return format!("{keyword} {name}");
+            }
+            format!("{keyword} {{...}}")
+        }
+        "preproc_def" | "preproc_function_def" => {
+            // Get the macro definition line
+            get_first_line(node, source_code)
+        }
+        _ => get_first_line(node, source_code),
+    }
+}
+
+/// Get text content of a node
+fn get_node_text(node: &Node, source_code: &str) -> String {
+    source_code
+        .get(node.start_byte()..node.end_byte())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Get the first line of a node's text
+fn get_first_line(node: &Node, source_code: &str) -> String {
+    let text = get_node_text(node, source_code);
+    text.lines().next().unwrap_or("").trim().to_string()
+}
+
+/// Format definition type for display
+fn format_def_type(def_type: &str) -> &str {
+    match def_type {
+        "function_definition" => "fn",
+        "type_definition" => "typedef",
+        "struct_specifier" => "struct",
+        "union_specifier" => "union",
+        "enum_specifier" => "enum",
+        "preproc_def" | "preproc_function_def" => "macro",
+        _ => def_type,
+    }
+}
+
+/// Parse source file and return AST
+fn parse_file(file_path: &Path, lang: Lang) -> Result<(String, Tree)> {
     let source_code = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
-    // Initialize tree-sitter parser
     let mut parser = TsParser::new();
     let language = lang.tree_sitter_language();
     parser
         .set_language(&language)
         .context("Failed to set language for parser")?;
 
-    // Parse the source code
     let tree = parser
         .parse(&source_code, None)
         .context("Failed to parse source code")?;
 
-    let target_row = line_number - 1; // Convert to 0-indexed
+    Ok((source_code, tree))
+}
+
+/// Detect language from file path
+fn detect_lang(file_path: &Path, explicit_lang: Option<Lang>) -> Lang {
+    explicit_lang.unwrap_or_else(|| {
+        file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(Lang::from_extension)
+            .unwrap_or_default()
+    })
+}
+
+/// Validate file path
+fn validate_file(file_path: &Path) -> Result<()> {
+    if !file_path.exists() {
+        anyhow::bail!("File not found: {}", file_path.display());
+    }
+    if file_path.is_dir() {
+        anyhow::bail!(
+            "Expected a file but received a directory: {}",
+            file_path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Find the innermost definition for a given line number
+fn find_innermost_definition(
+    file_path: &Path,
+    line_number: usize,
+    lang: Lang,
+) -> Result<Option<(String, usize, String)>> {
+    let (source_code, tree) = parse_file(file_path, lang)?;
+    let target_row = line_number - 1;
 
     let mut definitions = Vec::new();
 
-    // Traverse the AST
-    traverse(
+    traverse_for_line(
         tree.root_node(),
         &source_code,
         target_row,
@@ -257,47 +462,75 @@ fn find_innermost_definition(
     Ok(Some((def.code, def.start_line, def.def_type)))
 }
 
+/// List all definitions in a file
+fn list_outline(file_path: &Path, lang: Lang) -> Result<Vec<OutlineEntry>> {
+    let (source_code, tree) = parse_file(file_path, lang)?;
+
+    let mut entries = Vec::new();
+
+    traverse_for_outline(tree.root_node(), &source_code, 0, &mut entries, lang, false);
+
+    // Sort by line number
+    entries.sort_by_key(|e| e.line);
+
+    Ok(entries)
+}
+
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    // Validate file exists
-    if !args.file_path.exists() {
-        anyhow::bail!("File not found: {}", args.file_path.display());
-    }
+    match cli.command {
+        Commands::Find {
+            file_path,
+            line_number,
+            lang,
+            show_type,
+        } => {
+            validate_file(&file_path)?;
+            let lang = detect_lang(&file_path, lang);
 
-    if args.file_path.is_dir() {
-        anyhow::bail!(
-            "Expected a file but received a directory: {}",
-            args.file_path.display()
-        );
-    }
+            if let Some((code, start_line, def_type)) =
+                find_innermost_definition(&file_path, line_number, lang)?
+            {
+                if show_type {
+                    println!("# {def_type} starting at line {start_line}");
+                }
 
-    // Determine language
-    let lang = args.lang.unwrap_or_else(|| {
-        args.file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .and_then(Lang::from_extension)
-            .unwrap_or_default()
-    });
-
-    if let Some((code, start_line, def_type)) =
-        find_innermost_definition(&args.file_path, args.line_number, lang)?
-    {
-        if args.show_type {
-            println!("# {def_type} starting at line {start_line}");
+                for (i, line) in code.lines().enumerate() {
+                    println!("{}. {}", start_line + i, line);
+                }
+            } else {
+                eprintln!("No enclosing definition found for line {line_number}");
+                std::process::exit(1);
+            }
         }
 
-        // Print with line numbers
-        for (i, line) in code.lines().enumerate() {
-            println!("{}. {}", start_line + i, line);
+        Commands::Outline { file_path, lang } => {
+            validate_file(&file_path)?;
+            let lang = detect_lang(&file_path, lang);
+
+            let entries = list_outline(&file_path, lang)?;
+
+            if entries.is_empty() {
+                eprintln!("No definitions found in {}", file_path.display());
+                std::process::exit(1);
+            }
+
+            // Calculate line number width for alignment
+            let max_line = entries.iter().map(|e| e.end_line).max().unwrap_or(1);
+            let line_width = max_line.to_string().len();
+
+            for entry in entries {
+                let def_type = format_def_type(&entry.def_type);
+                println!(
+                    "{:>width$}: [{:<7}] {}",
+                    entry.line,
+                    def_type,
+                    entry.signature,
+                    width = line_width
+                );
+            }
         }
-    } else {
-        eprintln!(
-            "No enclosing definition found for line {}",
-            args.line_number
-        );
-        std::process::exit(1);
     }
 
     Ok(())
@@ -328,7 +561,7 @@ int add(int a, int b) {
 }
 ";
         let file = create_temp_file(content, ".c");
-        let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
+        let result = find_innermost_definition(file.path(), 3, Lang::C).unwrap();
         assert!(result.is_some());
         let (code, start_line, def_type) = result.unwrap();
         assert_eq!(def_type, "function_definition");
@@ -345,7 +578,7 @@ struct Point {
 };
 ";
         let file = create_temp_file(content, ".c");
-        let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
+        let result = find_innermost_definition(file.path(), 3, Lang::C).unwrap();
         assert!(result.is_some());
         let (_, _, def_type) = result.unwrap();
         assert_eq!(def_type, "struct_specifier");
@@ -360,7 +593,7 @@ typedef struct {
 } Point;
 ";
         let file = create_temp_file(content, ".c");
-        let result = find_innermost_definition(&file.path().to_path_buf(), 3, Lang::C).unwrap();
+        let result = find_innermost_definition(file.path(), 3, Lang::C).unwrap();
         assert!(result.is_some());
         let (_, _, def_type) = result.unwrap();
         assert_eq!(def_type, "type_definition");
@@ -372,7 +605,7 @@ typedef struct {
 // Just a comment
 ";
         let file = create_temp_file(content, ".c");
-        let result = find_innermost_definition(&file.path().to_path_buf(), 2, Lang::C).unwrap();
+        let result = find_innermost_definition(file.path(), 2, Lang::C).unwrap();
         assert!(result.is_none());
     }
 
@@ -383,5 +616,57 @@ typedef struct {
         assert!(matches!(Lang::from_extension("C"), Some(Lang::C)));
         assert!(Lang::from_extension("py").is_none());
         assert!(Lang::from_extension("rs").is_none());
+    }
+
+    #[test]
+    fn test_outline_functions() {
+        let content = r"
+int add(int a, int b) {
+    return a + b;
+}
+
+int subtract(int a, int b) {
+    return a - b;
+}
+";
+        let file = create_temp_file(content, ".c");
+        let entries = list_outline(file.path(), Lang::C).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].line, 2);
+        assert_eq!(entries[1].line, 6);
+        assert!(entries[0].signature.contains("add"));
+        assert!(entries[1].signature.contains("subtract"));
+    }
+
+    #[test]
+    fn test_outline_mixed_definitions() {
+        let content = r"
+#define MAX_SIZE 100
+
+struct Point {
+    int x;
+    int y;
+};
+
+typedef struct {
+    int width;
+    int height;
+} Rectangle;
+
+int calculate_area(Rectangle* r) {
+    return r->width * r->height;
+}
+";
+        let file = create_temp_file(content, ".c");
+        let entries = list_outline(file.path(), Lang::C).unwrap();
+        assert_eq!(entries.len(), 4); // macro, struct, typedef, function
+    }
+
+    #[test]
+    fn test_format_def_type() {
+        assert_eq!(format_def_type("function_definition"), "fn");
+        assert_eq!(format_def_type("struct_specifier"), "struct");
+        assert_eq!(format_def_type("type_definition"), "typedef");
+        assert_eq!(format_def_type("preproc_def"), "macro");
     }
 }
