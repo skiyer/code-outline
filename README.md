@@ -47,10 +47,11 @@ Arguments:
   <LINE_NUMBER>  Line number (1-based) to find the enclosing definition for
 
 Options:
-  -l, --lang <LANG>  Programming language [possible values: c]
-      --show-type    Show the type of definition found
-  -h, --help         Print help
-  -V, --version      Print version
+  -l, --lang <LANG>        Programming language [possible values: c]
+  -N, --no-line-numbers    Suppress line numbers in output
+      --show-type          Show the type of definition found
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 #### Examples
@@ -64,6 +65,9 @@ code-outline at src/main.c 42 --lang c
 
 # Show definition type
 code-outline at src/main.c 42 --show-type
+
+# Output without line numbers
+code-outline at -N src/main.c 42
 ```
 
 ### All - 列出文件所有定义

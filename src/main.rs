@@ -90,6 +90,10 @@ enum Commands {
         #[arg(short, long, value_enum)]
         lang: Option<Lang>,
 
+        /// Suppress line numbers in output
+        #[arg(short = 'N', long = "no-line-numbers")]
+        no_line_numbers: bool,
+
         /// Show the type of definition found
         #[arg(long)]
         show_type: bool,
@@ -538,6 +542,7 @@ fn main() -> Result<()> {
             file_path,
             line_number,
             lang,
+            no_line_numbers,
             show_type,
         } => {
             validate_file(&file_path)?;
@@ -550,8 +555,16 @@ fn main() -> Result<()> {
                     println!("# {def_type} starting at line {start_line}");
                 }
 
-                for (i, line) in code.lines().enumerate() {
-                    println!("{}. {}", start_line + i, line);
+                if no_line_numbers {
+                    print!("{code}");
+                    // Ensure trailing newline
+                    if !code.ends_with('\n') {
+                        println!();
+                    }
+                } else {
+                    for (i, line) in code.lines().enumerate() {
+                        println!("{}. {}", start_line + i, line);
+                    }
                 }
             } else {
                 eprintln!("No enclosing definition found for line {line_number}");
