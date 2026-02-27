@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # Cargo dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    open-pull-requests-limit: 10
+    groups:
+      # Group patch updates together
+      patch:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+      # Group minor updates together
+      minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "ci"

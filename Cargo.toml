@@ -2,6 +2,7 @@
 name = "code-outline"
 version = "2026.2.6"
 edition = "2021"
+rust-version = "1.78"  # MSRV: tree-sitter v0.24 requires Rust 1.78+
 authors = ["skiyer"]
 description = "Extract code definitions (function, struct, class, etc.) from source files using tree-sitter"
 license = "MIT"
@@ -9,6 +10,7 @@ readme = "README.md"
 repository = "https://github.com/skiyer/code-outline"
 keywords = ["tree-sitter", "parser", "definition", "code-analysis"]
 categories = ["command-line-utilities", "development-tools"]
+include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
 
 [dependencies]
 anyhow = "1"
