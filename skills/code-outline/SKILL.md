@@ -1,6 +1,6 @@
 ---
 name: code-outline
-description: Extract code definitions and generate file outlines from source files using tree-sitter. Use for code files to retrieve complete definitions or view structure; use `read` for non-code files.
+description: "Extract code definitions and file structures from source files. Returns complete function implementations, type definitions, and file outlines. Use when analyzing source code to retrieve specific definitions or view file structure."
 ---
 
 # Code Outline
