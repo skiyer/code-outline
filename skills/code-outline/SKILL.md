@@ -23,7 +23,7 @@ code-outline at <FILE_PATH> <LINE_NUMBER> [OPTIONS]
 
 **Options:**
 - `-l, --lang <LANG>` - Programming language (auto-detected if not specified)
-- `-N, --no-line-numbers` - Suppress line numbers in output
+- `-n, --line-numbers` - Show line numbers in output (default: off)
 - `--show-type` - Show the type of definition found
 
 **Examples:**
@@ -31,29 +31,28 @@ code-outline at <FILE_PATH> <LINE_NUMBER> [OPTIONS]
 # Find function containing line 42 (auto-detect language)
 code-outline at src/main.c 42
 
+# Output with line numbers
+code-outline at -n src/main.c 42
+
 # Specify language explicitly
 code-outline at src/main.c 42 --lang c
 
 # Show definition type
 code-outline at src/main.c 42 --show-type
-
-# Output without line numbers
-code-outline at -N src/main.c 42
 ```
 
 **Output (default):**
 ```
-# function_definition starting at line 22
-22. int add(int a, int b) {
-23.     return a + b;
-24. }
-```
-
-**Output (with `-N`):**
-```
 int add(int a, int b) {
     return a + b;
 }
+```
+
+**Output (with `-n`):**
+```
+22. int add(int a, int b) {
+23.     return a + b;
+24. }
 ```
 
 ## List Definitions (All)
@@ -161,7 +160,7 @@ code-outline all header_file --lang c
 | Task | Command |
 |------|---------|
 | Find what contains line 42 | `code-outline at file.c 42` |
-| Find without line numbers | `code-outline at -N file.c 42` |
+| Find with line numbers | `code-outline at -n file.c 42` |
 | List all definitions | `code-outline all file.c` |
 | Show with type info | `code-outline at file.c 42 --show-type` |
 | Force language | `code-outline all file.c --lang c` |
