@@ -48,7 +48,7 @@ Arguments:
 
 Options:
   -l, --lang <LANG>        Programming language [possible values: c]
-  -N, --no-line-numbers    Suppress line numbers in output
+  -n, --line-numbers       Show line numbers in output (default: off)
       --show-type          Show the type of definition found
   -h, --help               Print help
   -V, --version            Print version
@@ -60,14 +60,14 @@ Options:
 # Find the function containing line 42 (auto-detect language)
 code-outline at src/main.c 42
 
+# Output with line numbers
+code-outline at -n src/main.c 42
+
 # Explicitly specify language
 code-outline at src/main.c 42 --lang c
 
 # Show definition type
 code-outline at src/main.c 42 --show-type
-
-# Output without line numbers
-code-outline at -N src/main.c 42
 ```
 
 ### All - 列出文件所有定义

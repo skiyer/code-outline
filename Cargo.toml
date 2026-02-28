@@ -1,6 +1,6 @@
 [package]
 name = "code-outline"
-version = "2026.2.27"
+version = "2026.2.271"
 edition = "2021"
 rust-version = "1.78"  # MSRV: tree-sitter v0.24 requires Rust 1.78+
 authors = ["skiyer"]

@@ -90,9 +90,9 @@ enum Commands {
         #[arg(short, long, value_enum)]
         lang: Option<Lang>,
 
-        /// Suppress line numbers in output
-        #[arg(short = 'N', long = "no-line-numbers")]
-        no_line_numbers: bool,
+        /// Show line numbers in output (default: off)
+        #[arg(short = 'n', long = "line-numbers")]
+        line_numbers: bool,
 
         /// Show the type of definition found
         #[arg(long)]
@@ -542,7 +542,7 @@ fn main() -> Result<()> {
             file_path,
             line_number,
             lang,
-            no_line_numbers,
+            line_numbers,
             show_type,
         } => {
             validate_file(&file_path)?;
@@ -555,15 +555,15 @@ fn main() -> Result<()> {
                     println!("# {def_type} starting at line {start_line}");
                 }
 
-                if no_line_numbers {
+                if line_numbers {
+                    for (i, line) in code.lines().enumerate() {
+                        println!("{}. {}", start_line + i, line);
+                    }
+                } else {
                     print!("{code}");
                     // Ensure trailing newline
                     if !code.ends_with('\n') {
                         println!();
-                    }
-                } else {
-                    for (i, line) in code.lines().enumerate() {
-                        println!("{}. {}", start_line + i, line);
                     }
                 }
             } else {
