@@ -7,6 +7,7 @@
 //! Currently supported languages:
 //! - C
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -174,7 +175,7 @@ fn has_body(node: &Node, lang: Lang) -> bool {
 /// Traverse the AST and collect matching definitions for a specific line
 fn traverse_for_line(
     node: Node<'_>,
-    source_code: &str,
+    source_code: &[u8],
     target_row: usize,
     depth: usize,
     definitions: &mut Vec<Definition>,
@@ -203,10 +204,7 @@ fn traverse_for_line(
     }
 
     if is_definition {
-        let code = source_code
-            .get(node.start_byte()..node.end_byte())
-            .unwrap_or("")
-            .to_string();
+        let code = get_node_text(&node, source_code).into_owned();
         let start_line = node.start_position().row + 1;
         let end_line = node.end_position().row + 1;
         let size = node.end_byte() - node.start_byte();
@@ -239,7 +237,7 @@ fn traverse_for_line(
 /// Traverse the AST and collect all definitions for outline
 fn traverse_for_outline(
     node: Node<'_>,
-    source_code: &str,
+    source_code: &[u8],
     depth: usize,
     entries: &mut Vec<OutlineEntry>,
     lang: Lang,
@@ -294,24 +292,25 @@ fn traverse_for_outline(
 }
 
 /// Extract a compact signature from a definition node
-fn extract_signature(node: &Node, source_code: &str, lang: Lang) -> String {
+fn extract_signature(node: &Node, source_code: &[u8], lang: Lang) -> String {
     match lang {
         Lang::C => extract_c_signature(node, source_code),
     }
 }
 
 /// Extract signature for C language definitions
-fn extract_c_signature(node: &Node, source_code: &str) -> String {
+fn extract_c_signature(node: &Node, source_code: &[u8]) -> String {
     let node_type = node.kind();
 
     match node_type {
         "function_definition" => {
             // Extract declarator (function name and parameters)
             if let Some(declarator) = node.child_by_field_name("declarator") {
-                let sig = compact_whitespace(&get_node_text(&declarator, source_code));
+                let sig = compact_whitespace(get_node_text(&declarator, source_code).as_ref());
                 // Also get return type
                 if let Some(type_node) = node.child_by_field_name("type") {
-                    let ret_type = compact_whitespace(&get_node_text(&type_node, source_code));
+                    let ret_type =
+                        compact_whitespace(get_node_text(&type_node, source_code).as_ref());
                     return format!("{ret_type} {sig}");
                 }
                 return sig;
@@ -328,7 +327,7 @@ fn extract_c_signature(node: &Node, source_code: &str) -> String {
                 _ => "",
             };
             if let Some(name_node) = node.child_by_field_name("name") {
-                let name = compact_whitespace(&get_node_text(&name_node, source_code));
+                let name = compact_whitespace(get_node_text(&name_node, source_code).as_ref());
                 return format!("{keyword} {name}");
             }
             format!("{keyword} {{...}}")
@@ -342,14 +341,14 @@ fn extract_c_signature(node: &Node, source_code: &str) -> String {
 }
 
 /// Extract a concise typedef signature
-fn extract_typedef_signature(node: &Node, source_code: &str) -> String {
+fn extract_typedef_signature(node: &Node, source_code: &[u8]) -> String {
     let type_sig = node
         .child_by_field_name("type")
         .map(|type_node| match type_node.kind() {
             "struct_specifier" | "union_specifier" | "enum_specifier" => {
                 format_compound_typedef_signature(&type_node, source_code)
             }
-            _ => compact_whitespace(&get_node_text(&type_node, source_code)),
+            _ => compact_whitespace(get_node_text(&type_node, source_code).as_ref()),
         })
         .unwrap_or_default();
 
@@ -361,7 +360,7 @@ fn extract_typedef_signature(node: &Node, source_code: &str) -> String {
         };
         if node.field_name_for_child(index) == Some("declarator") {
             if let Some(child) = node.child(i) {
-                let text = compact_whitespace(&get_node_text(&child, source_code));
+                let text = compact_whitespace(get_node_text(&child, source_code).as_ref());
                 if !text.is_empty() {
                     declarators.push(text);
                 }
@@ -377,7 +376,7 @@ fn extract_typedef_signature(node: &Node, source_code: &str) -> String {
     }
 }
 
-fn format_compound_typedef_signature(node: &Node, source_code: &str) -> String {
+fn format_compound_typedef_signature(node: &Node, source_code: &[u8]) -> String {
     let keyword = match node.kind() {
         "struct_specifier" => "struct",
         "union_specifier" => "union",
@@ -386,7 +385,7 @@ fn format_compound_typedef_signature(node: &Node, source_code: &str) -> String {
     };
     let name = node
         .child_by_field_name("name")
-        .map(|name_node| compact_whitespace(&get_node_text(&name_node, source_code)))
+        .map(|name_node| compact_whitespace(get_node_text(&name_node, source_code).as_ref()))
         .unwrap_or_default();
     let has_body = has_body(node, Lang::C);
 
@@ -408,16 +407,16 @@ fn compact_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Get text content of a node
-fn get_node_text(node: &Node, source_code: &str) -> String {
-    source_code
+/// Get text content of a node (lossy UTF-8 if needed)
+fn get_node_text<'a>(node: &Node, source_code: &'a [u8]) -> Cow<'a, str> {
+    let slice = source_code
         .get(node.start_byte()..node.end_byte())
-        .unwrap_or("")
-        .to_string()
+        .unwrap_or_default();
+    String::from_utf8_lossy(slice)
 }
 
 /// Get the first line of a node's text
-fn get_first_line(node: &Node, source_code: &str) -> String {
+fn get_first_line(node: &Node, source_code: &[u8]) -> String {
     let text = get_node_text(node, source_code);
     text.lines().next().unwrap_or("").trim().to_string()
 }
@@ -436,8 +435,8 @@ fn format_def_type(def_type: &str) -> &str {
 }
 
 /// Parse source file and return AST
-fn parse_file(file_path: &Path, lang: Lang) -> Result<(String, Tree)> {
-    let source_code = std::fs::read_to_string(file_path)
+fn parse_file(file_path: &Path, lang: Lang) -> Result<(Vec<u8>, Tree)> {
+    let source_code = std::fs::read(file_path)
         .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
     let mut parser = TsParser::new();
@@ -620,6 +619,15 @@ mod tests {
         file
     }
 
+    fn create_temp_file_bytes(content: &[u8], extension: &str) -> NamedTempFile {
+        let mut file = tempfile::Builder::new()
+            .suffix(extension)
+            .tempfile()
+            .unwrap();
+        file.write_all(content).unwrap();
+        file
+    }
+
     #[test]
     fn test_find_function_definition() {
         let content = r"
@@ -674,6 +682,29 @@ typedef struct {
         let file = create_temp_file(content, ".c");
         let result = find_innermost_definition(file.path(), 2, Lang::C).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_non_utf8_input() {
+        let content = b"int add(int a, int b) {\n    return a + b;\n}\n// \xFF\n";
+        let file = create_temp_file_bytes(content, ".c");
+        let result = find_innermost_definition(file.path(), 2, Lang::C).unwrap();
+        assert!(result.is_some());
+        let (code, _, _) = result.unwrap();
+        assert!(code.contains("int add"));
+    }
+
+    #[test]
+    fn test_gb2312_comment_input() {
+        let mut content = b"int add(int a, int b) {\n    return a + b;\n}\n// ".to_vec();
+        let gb2312_comment = b"\xD6\xD0\xCE\xC4\xD7\xA2\xCA\xCD"; // "中文注释" (GB2312)
+        content.extend_from_slice(gb2312_comment);
+        content.extend_from_slice(b"\n");
+
+        let file = create_temp_file_bytes(&content, ".c");
+        let entries = list_outline(file.path(), Lang::C).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].signature.contains("add"));
     }
 
     #[test]
