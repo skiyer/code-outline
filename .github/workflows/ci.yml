@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1.28.4
+      - uses: crate-ci/typos@v1.44.0
 
   # Ensure Cargo.lock is up-to-date with Cargo.toml
   lockfile:
